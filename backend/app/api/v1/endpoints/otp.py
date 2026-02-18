@@ -1,17 +1,20 @@
-from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.services.otp import OTPService
+from app.services.audit_service import AuditService
 from app.models.schemas.auth import OTPRequest, OTPVerify
 from app.core.limiter import RateLimiter
+from app.core.metrics import OTP_GENERATED, OTP_VERIFIED, OTP_FAILED
+from app.core.notification import get_notification_provider
 
 router = APIRouter()
 
 @router.post("/generate", dependencies=[Depends(RateLimiter(requests=3, window=60))])
 async def generate_otp(
-    request: OTPRequest,
+    otp_in: OTPRequest,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db)
 ) -> Any:
     # In a real app, we look up the user by identifier First.
@@ -24,10 +27,24 @@ async def generate_otp(
     
     service = OTPService(db)
     challenge, code = await service.create_otp(dummy_user_id)
+    
+    # Audit
+    audit = AuditService(db)
+    await audit.log_event(
+        event_type="OTP_GENERATED", 
+        actor_id=str(dummy_user_id), 
+        ip_address=request.client.host if request.client else "unknown",
+        meta={"identifier": otp_in.identifier}
+    )
+    
+    OTP_GENERATED.inc()
     await db.commit()
     
-    # In production: Send SMS/Email via NotificationService
-    # In dev: Return code or log it
+    # Send Notification
+    notifier = get_notification_provider()
+    # Assuming identifier is phone for now, or determining based on format
+    # For MVP we treat identifier as recipient
+    await notifier.send_sms(otp_in.identifier, f"Your OTP is: {code}")
     
     return {
         "message": "OTP sent", 
@@ -45,6 +62,8 @@ async def verify_otp(
     await db.commit()
     
     if not is_valid:
+        OTP_FAILED.inc()
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
         
+    OTP_VERIFIED.inc()
     return {"status": "verified", "message": "OTP correct"}

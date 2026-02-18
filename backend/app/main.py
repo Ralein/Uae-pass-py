@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.middleware import SecurityHeadersMiddleware, RateLimitMiddleware, RequestIDMiddleware
 from app.api.v1.endpoints import auth, oauth2, registration, otp, user
+from app.core import metrics
 
 setup_logging()
 
@@ -34,6 +35,7 @@ app.include_router(oauth2.router, prefix=f"{settings.API_V1_STR}/auth", tags=["o
 app.include_router(registration.router, prefix=f"{settings.API_V1_STR}/registration", tags=["registration"])
 app.include_router(otp.router, prefix=f"{settings.API_V1_STR}/otp", tags=["otp"])
 app.include_router(user.router, prefix=f"{settings.API_V1_STR}/user", tags=["user"])
+app.include_router(metrics.router, tags=["metrics"])
 
 @app.get("/health")
 async def health_check():
